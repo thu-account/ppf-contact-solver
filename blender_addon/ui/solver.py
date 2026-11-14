@@ -597,24 +597,9 @@ class SOLVER_PT_SolverPanel(Panel):
             row.label(text="Click \"Transfer\" to upload data", icon="INFO")
 
         # Warn when local animation is the only blocker for Run
-        if SOLVER_OT_ClearAnimation.poll(context):
-            status = com.info.status
-            response = com.info.response
-            run_ready = (
-                not com.busy()
-                and status in (
-                    RemoteStatus.READY,
-                    RemoteStatus.RESUMABLE,
-                    RemoteStatus.SIMULATION_FAILED,
-                )
-                and com.is_connected()
-                and com.is_server_running()
-                and status.ready()
-                and not is_running(response)
-            )
-            if run_ready:
-                row = box.row()
-                row.label(text="Clear local animation before running", icon="INFO")
+        if SOLVER_OT_ClearAnimation.poll(context) and run_ready_except_local_animation():
+            row = box.row()
+            row.label(text="Clear local animation before running", icon="INFO")
 
         # Deformation caches: batch re-capture / clear of every STATIC-collider
         # deform cache and every animated-pin capture. Plain (always-expanded)
@@ -818,6 +803,32 @@ class SOLVER_OT_Transfer(AsyncOperator):
         report_build_outcome(self)
 
 
+def run_ready_except_local_animation() -> bool:
+    """Whether Run could start now if the scene held no fetched animation.
+
+    SOLVER_OT_Run.poll is this AND nothing for Clear Local Animation to remove.
+    The panel's "Clear local animation before running" line and the MCP
+    refusal of run_simulation ask the same question, so all three read this
+    one predicate and cannot disagree about what holds Run back.
+    """
+    if is_bake_running():
+        return False
+    status = com.info.status
+    return (
+        not com.busy()
+        and not _staged_encode_active()
+        and status in (
+            RemoteStatus.READY,
+            RemoteStatus.RESUMABLE,
+            RemoteStatus.SIMULATION_FAILED,
+        )
+        and com.is_connected()
+        and com.is_server_running()
+        and status.ready()
+        and not is_running(com.info.response)
+    )
+
+
 class SOLVER_OT_Run(AsyncOperator):
     """Run the solver."""
 
@@ -829,25 +840,9 @@ class SOLVER_OT_Run(AsyncOperator):
 
     @classmethod
     def poll(cls, context):
-        if is_bake_running():
-            return False
-        status = com.info.status
-        response = com.info.response
-        base = (
-            not com.busy()
-            and not _staged_encode_active()
-            and status in (
-                RemoteStatus.READY,
-                RemoteStatus.RESUMABLE,
-                RemoteStatus.SIMULATION_FAILED,
-            )
-            and com.is_connected()
-            and com.is_server_running()
-            and com.info.status.ready()
-            and not is_running(response)
-            and not SOLVER_OT_ClearAnimation.poll(context)
+        return run_ready_except_local_animation() and not SOLVER_OT_ClearAnimation.poll(
+            context
         )
-        return base
 
     def execute(self, context):
         error = _check_project_name_sync(context)

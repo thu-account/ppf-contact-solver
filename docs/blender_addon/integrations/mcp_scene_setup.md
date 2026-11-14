@@ -438,7 +438,9 @@ last error, as `(status=..., error=...)`. `start_remote_server` and
 3. Call `transfer_data`, and poll `get_remote_status` until `current_status`
    reads `Ready to Run`. If it does not get there, read `error`.
 4. Call `run_simulation`, and poll `get_remote_status` for its status and
-   progress.
+   progress. While the scene still holds animation fetched from an earlier
+   run, `run_simulation` is refused with a message that says so, as the
+   **Run** button is grayed out; call `clear_local_animation` first.
 5. Call `fetch_animation`, and poll `get_fetch_status` for the frames fetched
    into Blender.
 

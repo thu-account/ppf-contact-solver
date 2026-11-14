@@ -324,6 +324,7 @@ from . import bl_mcp_material_maps
 from . import bl_mcp_object_locks
 from . import bl_mcp_prompts
 from . import bl_mcp_resources
+from . import bl_mcp_run_after_fetch
 from . import bl_mcp_scene_inspection
 from . import bl_mcp_scene_parameters
 from . import bl_mcp_statistics
@@ -808,6 +809,7 @@ REGISTRY = {
     "bl_mcp_object_locks": bl_mcp_object_locks,
     "bl_mcp_prompts": bl_mcp_prompts,
     "bl_mcp_resources": bl_mcp_resources,
+    "bl_mcp_run_after_fetch": bl_mcp_run_after_fetch,
     "bl_mcp_scene_inspection": bl_mcp_scene_inspection,
     "bl_mcp_scene_parameters": bl_mcp_scene_parameters,
     "bl_mcp_statistics": bl_mcp_statistics,

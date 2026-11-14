@@ -27,8 +27,13 @@ def _status_detail() -> str:
     return ", ".join(detail)
 
 
-def _require_operator_poll(op_cls, action: str) -> None:
-    """Validate the exact Blender operator poll used by the UI operator."""
+def _require_operator_poll(op_cls, action: str, blocker=None) -> None:
+    """Validate the exact Blender operator poll used by the UI operator.
+
+    *blocker*, when given, is called after a failed poll and returns what holds
+    the operator back, or "" when it cannot tell; a reason replaces the generic
+    wording, so an agent learns the fix without reading the source.
+    """
     try:
         allowed = bool(op_cls.poll(bpy.context))
     except Exception as exc:
@@ -36,9 +41,25 @@ def _require_operator_poll(op_cls, action: str) -> None:
             f"Cannot {action}: operator poll failed ({type(exc).__name__}: {exc})"
         ) from exc
     if not allowed:
-        raise MCPError(
-            f"Cannot {action}: operator conditions not met ({_status_detail()})"
+        reason = (blocker() if blocker else "") or "operator conditions not met"
+        raise MCPError(f"Cannot {action}: {reason} ({_status_detail()})")
+
+
+def _local_animation_blocks_run() -> str:
+    """The reason Run is refused when fetched animation is all that blocks it."""
+    from ...ui.solver import (
+        SOLVER_OT_ClearAnimation,
+        run_ready_except_local_animation,
+    )
+
+    if run_ready_except_local_animation() and SOLVER_OT_ClearAnimation.poll(
+        bpy.context
+    ):
+        return (
+            "the scene still holds animation fetched from an earlier run; "
+            "call clear_local_animation, then run_simulation again"
         )
+    return ""
 
 
 @simulation_handler
@@ -64,10 +85,16 @@ def transfer_data():
 
 @simulation_handler
 def run_simulation():
-    """Start simulation."""
+    """Start simulation.
+
+    Refused, as the Run button is, while the scene still holds animation
+    fetched from an earlier run; clear_local_animation removes it.
+    """
     from ...ui.solver import SOLVER_OT_Run
 
-    _require_operator_poll(SOLVER_OT_Run, "start simulation")
+    _require_operator_poll(
+        SOLVER_OT_Run, "start simulation", blocker=_local_animation_blocks_run
+    )
     # Use bpy.ops for the modal timer loop
     bpy.ops.solver.run()
     return {
