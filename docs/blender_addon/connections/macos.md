@@ -41,7 +41,9 @@ To run larger scenes on a remote GPU instead, use [SSH](ssh.md) or
    searches the parent folders for the solver root and shows the one it
    used. Under the field the panel shows **Solver path valid** (with
    **Using solver root** when it resolved a subfolder), or
-   **ppf-cts-server not found**.
+   **ppf-cts-server not found**. A folder that holds the server with no
+   `ppf-contact-solver` beside it shows **No solver build found under** the
+   path; see [Troubleshooting](../troubleshooting.md#connection-the-native-types).
 3. Click **GPU** (the Metal build) or **CPU** (the portable build) in the
    toggle under **Solver Path**. See
    {ref}`Choosing the build <choosing-the-build>`.

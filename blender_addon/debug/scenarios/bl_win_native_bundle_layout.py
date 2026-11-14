@@ -120,6 +120,7 @@ try:
     spaced = os.path.join(tmp, "John Smith", "Downloads",
                           "ppf-contact-solver-win64")
     _touch(os.path.join(spaced, "target", "release", "ppf-cts-server.exe"))
+    _touch(os.path.join(spaced, "target", "release", "ppf-contact-solver.exe"))
     record("root_with_a_space_validates", probe(spaced) is not None,
            {"path": spaced, "got": probe(spaced)})
     record("root_with_a_space_resolves", _same(resolve_root(spaced), spaced),

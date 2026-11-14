@@ -1126,8 +1126,8 @@ class EffectRunner:
 
         # The Rust ppf-cts-server binary writes ``progress.log`` markers
         # (SERVER_STARTING / SERVER_READY) and serves the same wire
-        # protocol the addon speaks; build it with
-        # ``cargo build --release -p ppf-cts-server``.
+        # protocol the addon speaks; ``cargo build --release`` builds it
+        # together with the solver a run takes from the same directory.
         # An environment assignment in front of the binary is how the GPU
         # choice is delivered to a server started through a shell. It is
         # applied on the solver host, so the index is that host's, which is

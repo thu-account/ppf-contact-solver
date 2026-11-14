@@ -270,8 +270,9 @@ def _draw_native_device(layout, props, root, resolver, builds=None) -> None:
     "this build has no CPU solver" from "this add-on cannot do that".
 
     WHICH DEVICES ARE OFFERED IS A FACT ABOUT THE DISK. The backend is chosen
-    when the solver is BUILT, so a device is available exactly when a server
-    binary for it exists under the selected root. A machine with a GPU whose
+    when the solver is BUILT, so a device is available exactly when a build
+    for it, the server with the solver beside it, exists under the selected
+    root. A machine with a GPU whose
     tree has only ever built the CPU backend can honestly offer only CPU, and
     the reverse is the common case: an ordinary GPU checkout has no CPU build
     until someone asks for one.
@@ -333,14 +334,15 @@ def _draw_native_status(layout, server_type, path) -> None:
     subdirectory such as ``target/release``, ``target/cuda/release``, ``bin``,
     or an embedded ``python`` folder), then draws a CHECKMARK when a root is
     found, adding a second line naming the resolved root when it differs from
-    what the user selected, or an ERROR when no ancestor holds a server.
-    No-op for a blank path.
+    what the user selected, or an ERROR when no ancestor holds a build, worded
+    for a server left without its solver where that is why
+    (``native_half_built``). No-op for a blank path.
 
     ONE DRAWER FOR THE THREE NATIVES. What differs between them is the resolver
     and the executable's name, and both come from the backend's own entry in
     `core.connection`, so neither is spelled here.
     """
-    from ..core.connection import native_resolvers
+    from ..core.connection import native_half_built, native_resolvers
 
     backend_type = SERVER_TYPE_BACKENDS[server_type]
     path = resolve_local_path(path or "").rstrip("/\\")
@@ -349,6 +351,16 @@ def _draw_native_status(layout, server_type, path) -> None:
     resolve_root = native_resolvers(backend_type)[3]
     resolved = resolve_root(path)
     if resolved is None:
+        if native_half_built(backend_type, path):
+            # THE SERVER IS THERE AND THE SOLVER IS NOT, which is what building
+            # the server crate alone leaves. "Not found" would be false about a
+            # file the artist can see; Connect's refusal names the directory
+            # and the file it lacks.
+            layout.label(
+                text=iface_("No solver build found under {path}").format(path=path),
+                icon="ERROR",
+            )
+            return
         exe = "ppf-cts-server.exe" if backend_type == "win_native" else "ppf-cts-server"
         layout.label(text=f"{exe} not found", icon="ERROR")
         return

@@ -116,6 +116,7 @@ try:
     _touch(os.path.join(bundle, "bin", "libppfbe_metal.dylib"))
     repo = os.path.join(tmp, "repo")
     _touch(os.path.join(repo, "target", "release", "ppf-cts-server"))
+    _touch(os.path.join(repo, "target", "release", "ppf-contact-solver"))
     empty = os.path.join(tmp, "unrelated")
     os.makedirs(empty, exist_ok=True)
     # A Windows-shaped layout: the server under bin/ alone. The macOS probe

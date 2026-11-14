@@ -148,6 +148,8 @@ def _solver_root(tmp_path, backend="metal"):
     d = tmp_path / "target" / "release"
     d.mkdir(parents=True, exist_ok=True)
     (d / "ppf-cts-server").write_text("")
+    # The solver beside the server is what makes the directory a build.
+    (d / "ppf-contact-solver").write_text("")
     (d / ".ppf-backend").write_text(backend)
     return str(tmp_path)
 
@@ -254,6 +256,7 @@ def test_the_target_directory_matches_the_server_that_was_spawned(conn, tmp_path
         d = root.joinpath(*parts)
         d.mkdir(parents=True, exist_ok=True)
         (d / "ppf-cts-server").write_text("")
+        (d / "ppf-contact-solver").write_text("")
         (d / ".ppf-backend").write_text(backend)
 
     captured = {}

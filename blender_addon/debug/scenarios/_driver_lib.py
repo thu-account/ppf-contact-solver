@@ -619,10 +619,16 @@ class DriverHelpers:
             if s.phase.name == "ONLINE" and s.server.name == "RUNNING":
                 return
             time.sleep(0.2)
+        # THE REASON IS IN THE STATE, AND WITHOUT IT A REFUSAL READS AS A SLOW
+        # START. A connect the add-on refused (a server of another build on the
+        # port, a root with no build for the device) ends OFFLINE with the
+        # refusal in `error`; phase and server alone say only that nothing came
+        # up, which sent a wrong device choice looking like a display problem.
+        s = self.facade.engine.state
         raise RuntimeError(
             f"{backend_type} server never reached RUNNING within {timeout}s "
-            f"(phase={self.facade.engine.state.phase.name}, "
-            f"server={self.facade.engine.state.server.name})"
+            f"(phase={s.phase.name}, server={s.server.name}, "
+            f"error={getattr(s, 'error', None)!r})"
         )
 
     def connect_win_native(self, *, local_path, server_port, project_name,

@@ -84,9 +84,14 @@ try:
     _touch(os.path.join(bundle, "python", "python.exe"))
     repo = os.path.join(tmp, "repo")
     _touch(os.path.join(repo, "target", "release", "ppf-cts-server.exe"))
+    # A release directory is a build only with the solver beside the server.
+    _touch(os.path.join(repo, "target", "release", "ppf-contact-solver.exe"))
     _touch(os.path.join(repo, "build-win-native", "python", "python.exe"))
     empty = os.path.join(tmp, "unrelated")
     os.makedirs(empty, exist_ok=True)
+    # What `cargo build --release -p ppf-cts-server` leaves: the server alone.
+    half = os.path.join(tmp, "half")
+    _touch(os.path.join(half, "target", "release", "ppf-cts-server.exe"))
 
     def _same(a, b):
         return a is not None and os.path.normpath(a) == os.path.normpath(b)
@@ -148,6 +153,29 @@ try:
         [ic for _, ic in fl_bad.labels] == ["ERROR"]
         and any("not found" in t for t, _ in fl_bad.labels),
         {"labels": fl_bad.labels},
+    )
+
+    # ---- a server with no solver beside it is not a root, and says why ----
+    fl_half = _FakeLayout()
+    main_panel._draw_native_status(fl_half, "WIN_NATIVE", half)
+    # And from the subfolder an artist is as likely to pick, which the root
+    # walk climbs out of for a whole build and must not mislabel for half of one.
+    fl_half_sub = _FakeLayout()
+    main_panel._draw_native_status(
+        fl_half_sub, "WIN_NATIVE", os.path.join(half, "target", "release"))
+    half_text = conn.win_native_not_found_message(half, conn.DEVICE_GPU)
+    record(
+        "server_without_solver_is_not_a_root",
+        resolve(half) is None
+        and conn.win_native_server_binary(half, conn.DEVICE_GPU) is None
+        and [ic for _, ic in fl_half.labels] == ["ERROR"]
+        and not any("not found" in t for t, _ in fl_half.labels)
+        and [ic for _, ic in fl_half_sub.labels] == ["ERROR"]
+        and not any("not found" in t for t, _ in fl_half_sub.labels)
+        and "ppf-contact-solver.exe" in half_text
+        and "not found under" not in half_text,
+        {"labels": fl_half.labels, "subfolder_labels": fl_half_sub.labels,
+         "resolved": resolve(half), "message": half_text},
     )
 
     fl_blank = _FakeLayout()

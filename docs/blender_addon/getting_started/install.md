@@ -59,7 +59,8 @@ the add-on; [Connections](../connections/index.md) covers the solver.
 :::{note}
 The add-on only looks for `ppf-cts-server` (`ppf-cts-server.exe` on Windows
 Native) under the path you give it, in the build layouts listed in
-{ref}`Choosing the Build <choosing-the-build>`.
+{ref}`Choosing the Build <choosing-the-build>`, and counts a `release` folder
+as a build only when `ppf-contact-solver` sits beside the server.
 :::
 
 ## Install the Add-on

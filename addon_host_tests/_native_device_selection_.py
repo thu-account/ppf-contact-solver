@@ -39,6 +39,27 @@ def _exe(native: str) -> str:
     return "ppf-cts-server.exe" if native == "win_native" else "ppf-cts-server"
 
 
+def _solver(native: str) -> str:
+    """The solver's file name for *native*, which every build links beside the server."""
+    return "ppf-contact-solver.exe" if native == "win_native" else "ppf-contact-solver"
+
+
+def _build_dir(directory, native: str, backend=None):
+    """Make *directory* a build: the server, the solver beside it, and a marker if named.
+
+    A SOLVER IS WRITTEN BESIDE EVERY SERVER, because that is what a build is.
+    Every producer of these directories (cargo, the three bundlers, the Docker
+    image) puts the two side by side, and a release directory holding the
+    server alone is refused as no build at all; the cases that exercise that
+    refusal build theirs with ``_server_only``.
+    """
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / _exe(native)).write_text("")
+    (directory / _solver(native)).write_text("")
+    if backend is not None:
+        (directory / ".ppf-backend").write_text(backend)
+
+
 def _resolver(conn, native):
     return getattr(conn, f"{native}_server_binary")
 
@@ -60,20 +81,15 @@ def conn():
 def _root(tmp_path, *, gpu: bool, cpu: bool, native: str):
     """A solver root holding the requested builds, in the shipped layout.
 
-    NO BACKEND MARKER IS WRITTEN, deliberately: this is the DISTRIBUTED
-    bundle's shape, where `bundle.sh` copies the binaries and not the marker,
-    and it is what every resolution below the marker tests exercises. A root
-    that carries one is built by ``_marked`` instead.
+    NO BACKEND MARKER IS WRITTEN, deliberately: this is the shape of a bundle
+    from before the bundlers wrote one, the binaries and nothing naming their
+    backend, and it is what every resolution below the marker tests exercises.
+    A root that carries one is built by ``_marked`` instead.
     """
-    exe = _exe(native)
     if gpu:
-        d = tmp_path / "target" / "release"
-        d.mkdir(parents=True, exist_ok=True)
-        (d / exe).write_text("")
+        _build_dir(tmp_path / "target" / "release", native)
     if cpu:
-        d = tmp_path / "target" / "cpu" / "release"
-        d.mkdir(parents=True, exist_ok=True)
-        (d / exe).write_text("")
+        _build_dir(tmp_path / "target" / "cpu" / "release", native)
     return str(tmp_path)
 
 
@@ -84,11 +100,7 @@ def _marked(tmp_path, *parts, backend: str, native: str):
     every build it links, so a root produced by cargo always has one and this
     is the shape the panel meets on a developer's machine.
     """
-    exe = _exe(native)
-    d = tmp_path.joinpath(*parts)
-    d.mkdir(parents=True, exist_ok=True)
-    (d / exe).write_text("")
-    (d / ".ppf-backend").write_text(backend)
+    _build_dir(tmp_path.joinpath(*parts), native, backend)
     return str(tmp_path)
 
 
@@ -178,9 +190,7 @@ def test_macos_does_not_accept_the_windows_bundle_layout(conn, tmp_path):
     as in the rig because this tier runs on every push and the rig does not.
     """
     for sub in ("bin", "bin-cpu"):
-        d = tmp_path / sub
-        d.mkdir(parents=True, exist_ok=True)
-        (d / "ppf-cts-server").write_text("")
+        _build_dir(tmp_path / sub, "mac_native")
     root = str(tmp_path)
     assert conn.mac_native_server_binary(root, conn.DEVICE_GPU) is None
     assert conn.mac_native_server_binary(root, conn.DEVICE_CPU) is None
@@ -304,10 +314,7 @@ def test_a_marker_does_not_give_macos_the_windows_bundle_layout(conn, tmp_path):
     which is what `bl_mac_native_root_resolve` asserts.
     """
     for sub in ("bin", "bin-cpu"):
-        d = tmp_path / sub
-        d.mkdir(parents=True, exist_ok=True)
-        (d / "ppf-cts-server").write_text("")
-        (d / ".ppf-backend").write_text("metal")
+        _build_dir(tmp_path / sub, "mac_native", backend="metal")
     root = str(tmp_path)
     assert conn.mac_native_server_binary(root, conn.DEVICE_GPU) is None
     assert conn.mac_native_server_binary(root, conn.DEVICE_CPU) is None
@@ -350,9 +357,7 @@ def test_the_root_walk_still_refuses_the_windows_bundle_layout_on_macos(conn, tm
     find, whichever device is being considered.
     """
     for sub in ("bin", "bin-cpu"):
-        d = tmp_path / sub
-        d.mkdir(parents=True, exist_ok=True)
-        (d / "ppf-cts-server").write_text("")
+        _build_dir(tmp_path / sub, "mac_native")
     assert conn.resolve_mac_native_root(str(tmp_path)) is None
 
 
@@ -365,15 +370,263 @@ def test_a_marker_written_by_cmd_exe_reads_the_same(conn, tmp_path, native):
     also why the marker is written with no space before the redirect: `echo cpu
     >file` would put the space INSIDE the name.
     """
-    exe = _exe(native)
     d = tmp_path / "target" / "release"
-    d.mkdir(parents=True, exist_ok=True)
-    (d / exe).write_text("")
+    _build_dir(d, native)
     (d / ".ppf-backend").write_bytes(b"cpu\r\n")
     root = str(tmp_path)
     resolve = _resolver(conn, native)
     assert resolve(root, conn.DEVICE_CPU) is not None
     assert resolve(root, conn.DEVICE_GPU) is None
+
+
+# ---------------------------------------------------------------------------
+# A server with no solver beside it
+#
+# A BUILD IS THE SOLVER AND THE SERVER, SIDE BY SIDE. The spawn names the
+# server's own target directory in `CARGO_TARGET_DIR`, and the session a run
+# writes takes the solver out of that same directory, so a release directory
+# holding the server alone can start a server and can never run a solve.
+#
+# That directory is easy to make and was being offered as the GPU build:
+# `cargo build --release -p ppf-cts-server` builds the server crate only, which
+# writes no solver and no marker, and it was the command the add-on's own
+# not-found message recommended. On a machine whose real build was the CPU one
+# in `target/cpu/release`, the panel then offered GPU, Connect accepted it, and
+# Start Server launched a server with nothing to run.
+#
+# THE MARKER DOES NOT STAND IN FOR THE SOLVER. `build.rs` writes it when the
+# build SCRIPT runs, before anything is compiled or linked, so a failed or
+# interrupted build leaves a marker beside a server with no solver. The cases
+# below therefore run marked and unmarked alike.
+# ---------------------------------------------------------------------------
+
+
+def _server_only(tmp_path, *parts, native: str, backend=None):
+    """A root whose ``<parts>`` directory holds a server and NO solver."""
+    directory = tmp_path.joinpath(*parts)
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / _exe(native)).write_text("")
+    if backend is not None:
+        (directory / ".ppf-backend").write_text(backend)
+    return str(tmp_path)
+
+
+_RELEASE_ROWS = (
+    ("target", "release"),
+    ("target", "cpu", "release"),
+    ("target", "cuda", "release"),
+)
+
+
+@pytest.mark.parametrize("native", NATIVES)
+@pytest.mark.parametrize("parts", _RELEASE_ROWS)
+@pytest.mark.parametrize("backend", (None, "cuda", "cpu"))
+def test_a_server_without_a_solver_is_not_a_build(conn, tmp_path, native, parts, backend):
+    """A release directory holding the server alone answers for NO device.
+
+    Not for the device of its layout row, which is how an unmarked one in
+    `target/release` came to be the GPU build, and not for the device a marker
+    names either. Nothing about it is a root: the walk that finds the folder
+    the artist meant must not stop at a directory no run can use.
+    """
+    root = _server_only(tmp_path, *parts, native=native, backend=backend)
+    resolve = _resolver(conn, native)
+    assert resolve(root, conn.DEVICE_GPU) is None
+    assert resolve(root, conn.DEVICE_CPU) is None
+    assert getattr(conn, f"{native}_gpu_builds")(root) == {}
+    assert getattr(conn, f"resolve_{native}_root")(root) is None
+
+
+@pytest.mark.parametrize("native", NATIVES)
+def test_a_server_only_directory_does_not_stand_in_for_the_gpu_build(conn, tmp_path, native):
+    """THE REPORTED TREE: a bare server in `target/release` beside a real CPU build.
+
+    The GPU row holds no build, so GPU resolves to nothing and CPU to the build
+    that is there. Connecting as GPU is then refused by naming the CPU build,
+    which is the instruction that works on this tree, rather than accepted and
+    left to fail at the first solve.
+    """
+    _server_only(tmp_path, "target", "release", native=native)
+    root = _marked(tmp_path, "target", "cpu", "release", backend="cpu", native=native)
+    resolve = _resolver(conn, native)
+    assert resolve(root, conn.DEVICE_GPU) is None
+    cpu = resolve(root, conn.DEVICE_CPU)
+    assert cpu is not None and "cpu" in cpu.replace("\\", "/").split("/"), cpu
+    assert getattr(conn, f"{native}_gpu_builds")(root) == {}
+    assert getattr(conn, f"resolve_{native}_root")(root) == root
+    text = getattr(conn, f"{native}_not_found_message")(root, conn.DEVICE_GPU)
+    assert "holds the CPU build" in text and "Set Compute Device to CPU" in text, text
+
+
+# The build each half-built directory needs, which is not the same command for
+# every one: a plain build writes to `target/release` and would leave a
+# `target/cpu/release` exactly as it found it.
+_REBUILD = {
+    ("target", "release"): "`cargo build --release`",
+    ("target", "cpu", "release"): (
+        "`CARGO_TARGET_DIR=target/cpu cargo build --release --features cpu`"
+    ),
+    ("target", "cuda", "release"): (
+        "`CARGO_TARGET_DIR=target/cuda cargo build --release --features cuda`"
+    ),
+}
+
+
+@pytest.mark.parametrize("native", NATIVES)
+@pytest.mark.parametrize("parts", _RELEASE_ROWS)
+def test_the_refusal_for_a_server_only_root_names_the_missing_solver(
+    conn, tmp_path, native, parts
+):
+    """The folder is right and the build is half there, and the refusal says so.
+
+    "ppf-cts-server not found" would be false, the artist can see the file, and
+    advice to build the server would send them back to the command that made
+    this directory. The refusal names the directory, the file that is missing
+    from it, and the build that fills THAT directory, in every row a server can
+    be left alone in.
+    """
+    root = _server_only(tmp_path, *parts, native=native)
+    assert conn.native_half_built(native, root)
+    message = getattr(conn, f"{native}_not_found_message")
+    for device in (conn.DEVICE_GPU, conn.DEVICE_CPU, None):
+        text = message(root, device)
+        assert str(tmp_path.joinpath(*parts)) in text, text
+        assert _solver(native) in text, text
+        assert "not found under" not in text, text
+        assert _REBUILD[parts] in text, text
+
+
+@pytest.mark.parametrize("native", NATIVES)
+def test_a_marked_half_build_is_told_to_finish_the_backend_it_started(conn, tmp_path, native):
+    """A marker beside a bare server is a build that stopped early.
+
+    `build.rs` refuses a different backend in a directory whose marker names
+    one, so advising the CPU build there would send the artist into that
+    refusal. The backend the marker names is the one to finish.
+    """
+    root = _server_only(tmp_path, "target", "release", native=native, backend="cuda")
+    text = getattr(conn, f"{native}_not_found_message")(root, conn.DEVICE_GPU)
+    assert "`cargo build --release --features cuda`" in text, text
+    assert "--features cpu" not in text, text
+
+
+@pytest.mark.parametrize("native", NATIVES)
+def test_the_refusal_names_the_first_half_build_in_layout_order(conn, tmp_path, native):
+    """With several bare servers, the one named is the one the layout visits first."""
+    _server_only(tmp_path, "target", "cuda", "release", native=native)
+    root = _server_only(tmp_path, "target", "release", native=native)
+    text = getattr(conn, f"{native}_not_found_message")(root, conn.DEVICE_GPU)
+    assert text.startswith(f"{tmp_path / 'target' / 'release'} holds"), text
+
+
+@pytest.mark.parametrize("native", NATIVES)
+@pytest.mark.parametrize("selection", ("release", "target", "server"))
+def test_a_selection_inside_a_half_built_root_is_still_called_half_built(
+    conn, tmp_path, monkeypatch, native, selection
+):
+    """The half-build question walks up, as the root question does.
+
+    `target/release`, `target` and the server file itself are the selections
+    the root walk exists for. A folder that is half built resolves to no root,
+    so Connect falls back to what was selected, and asking only that exact
+    folder said "ppf-cts-server not found" about the directory holding it.
+    """
+    half = tmp_path / "half"
+    _server_only(half, "target", "release", native=native)
+    selected = {
+        "release": half / "target" / "release",
+        "target": half / "target",
+        "server": half / "target" / "release" / _exe(native),
+    }[selection]
+    assert conn.native_half_built(native, str(selected))
+    assert conn.native_half_built_root(native, str(selected)) == str(half)
+    for variable in (
+        "PPF_WIN_NATIVE_NO_SPAWN", "PPF_MAC_NATIVE_NO_SPAWN", "PPF_LINUX_NATIVE_NO_SPAWN",
+    ):
+        monkeypatch.delenv(variable, raising=False)
+    monkeypatch.setattr(
+        conn, "_query_ppf_cts_server", lambda port, timeout=1.5, name="": None
+    )
+    connect = getattr(conn, f"connect_{native}")
+    with pytest.raises(FileNotFoundError) as refusal:
+        connect(str(selected), 9090, conn.DEVICE_GPU)
+    text = str(refusal.value)
+    assert str(half / "target" / "release") in text, text
+    assert _solver(native) in text and "not found under" not in text, text
+    # A folder beside the half-built root, not inside it, is not part of one.
+    unrelated = tmp_path / "unrelated" / "deep"
+    unrelated.mkdir(parents=True)
+    assert not conn.native_half_built(native, str(unrelated))
+
+
+@pytest.mark.parametrize("native", NATIVES)
+def test_the_panel_can_tell_half_a_build_from_an_empty_folder(conn, tmp_path, native):
+    """The path line asks this before it says the server was not found.
+
+    Only a server with no solver beside it answers yes: not a folder holding
+    nothing, and not a root whose builds are whole.
+    """
+    half = _server_only(tmp_path / "half", "target", "release", native=native)
+    assert conn.native_half_built(native, half)
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    assert not conn.native_half_built(native, str(empty))
+    whole = _root(tmp_path / "whole", gpu=True, cpu=True, native=native)
+    assert not conn.native_half_built(native, whole)
+
+
+@pytest.mark.parametrize("native", NATIVES)
+def test_no_refusal_recommends_building_the_server_alone(conn, tmp_path, native):
+    """The not-found advice names a build that produces a solver.
+
+    `-p ppf-cts-server` builds one crate of the three a run needs, and a tree
+    built that way is the one the cases above refuse.
+    """
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    text = getattr(conn, f"{native}_not_found_message")(str(empty), conn.DEVICE_GPU)
+    assert "`cargo build --release`" in text, text
+    assert "-p ppf-cts-server" not in text, text
+
+
+def test_the_windows_bin_rows_are_not_asked_for_a_solver(conn, tmp_path):
+    """`bin\\` is not a cargo target directory, so nothing is expected beside its server.
+
+    The rule above is about `release` directories, where the spawn names the
+    server's own directory as the one a run takes its solver from. For a
+    server in `bin\\` the spawn names none (`native_target_dir`) and the
+    frontend searches `<root>\\target`, so the solver belongs there and a check
+    beside the server would refuse a layout for a file it never held.
+    """
+    for sub in ("bin", "bin-cpu"):
+        d = tmp_path / sub
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "ppf-cts-server.exe").write_text("")
+    root = str(tmp_path)
+    gpu = conn.win_native_server_binary(root, conn.DEVICE_GPU)
+    cpu = conn.win_native_server_binary(root, conn.DEVICE_CPU)
+    assert gpu == str(tmp_path / "bin" / "ppf-cts-server.exe")
+    assert cpu == str(tmp_path / "bin-cpu" / "ppf-cts-server.exe")
+    assert conn.resolve_win_native_root(root) == root
+
+
+@pytest.mark.parametrize("native", NATIVES)
+def test_launching_a_server_only_root_is_refused(conn, tmp_path, monkeypatch, native):
+    """The launch refuses a bare server instead of starting it.
+
+    This is the step that used to succeed: an unnamed GPU build is returned
+    without a probe, so the server came up, answered pings and reported a
+    solver it did not have.
+    """
+    root = _server_only(tmp_path, "target", "release", native=native)
+    monkeypatch.setattr(conn, "_port_is_in_use", lambda port: False)
+    for variable in (
+        "PPF_WIN_NATIVE_NO_SPAWN", "PPF_MAC_NATIVE_NO_SPAWN", "PPF_LINUX_NATIVE_NO_SPAWN",
+    ):
+        monkeypatch.delenv(variable, raising=False)
+    spawn = getattr(conn, f"spawn_{native}_server")
+    with pytest.raises(FileNotFoundError, match="ppf-contact-solver"):
+        spawn(root, 9090, device=conn.DEVICE_GPU)
 
 
 # ---------------------------------------------------------------------------

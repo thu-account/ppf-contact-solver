@@ -31,6 +31,9 @@
 from __future__ import annotations
 
 import posixpath
+import shutil
+import subprocess
+import sys
 
 import pytest
 
@@ -120,6 +123,128 @@ def test_a_tilde_root_is_tested_expanded_and_printed_unexpanded(remote_builds):
     tested = '"$HOME"' + "'/ppf-contact-solver/target/release/ppf-cts-server'"
     assert tested in command
     assert "'~/ppf-contact-solver/target/release';" in command
+
+
+def test_the_probe_lists_a_directory_only_with_the_solver_beside_the_server(remote_builds):
+    """A release directory holding the server alone is not a build.
+
+    `cargo build --release -p ppf-cts-server` leaves exactly that, and a host
+    holding it was listed as having a GPU build: Start Server then launched a
+    server with no solver to run. The listing is the only thing the add-on
+    knows about that host, so the test for the second file has to be in the
+    command, and it has to read a `~` root the way the server test does.
+    """
+    command = remote_builds.probe_command(ROOT)
+    for sub in (
+        "target/release",
+        "target/cuda/release",
+        "target/rocm/release",
+        "target/metal/release",
+        "target/cpu/release",
+    ):
+        assert f"'{ROOT}/{sub}/ppf-contact-solver'" in command, sub
+    command = remote_builds.probe_command("~/ppf-contact-solver")
+    tested = '"$HOME"' + "'/ppf-contact-solver/target/release/ppf-contact-solver'"
+    assert tested in command
+
+
+def _probe_by_a_real_shell(remote_builds, root, env=None):
+    """Run the probe the way a solver host does, and return what it printed."""
+    shell = shutil.which("sh")
+    if shell is None:
+        pytest.skip("no POSIX shell on this machine to run the probe with")
+    done = subprocess.run(
+        [shell, "-c", remote_builds.probe_command(root)],
+        capture_output=True, text=True, timeout=30, env=env,
+    )
+    assert done.returncode == 0, (done.returncode, done.stderr)
+    return remote_builds.parse_listing(done.stdout.splitlines())
+
+
+def _host_tree(root):
+    """A solver host's tree with one of everything the probe has to tell apart.
+
+    THE LAST DIRECTORY THE PROBE VISITS IS ONE IT MUST NOT LIST, deliberately:
+    a command built as `test && test && printf` rather than inside `if ...;
+    fi` exits non-zero there, and the add-on records a non-zero probe as a
+    host that could not be asked.
+    """
+    def directory(*parts, server=True, solver=True, marker=None):
+        d = root.joinpath(*parts)
+        d.mkdir(parents=True, exist_ok=True)
+        if server:
+            (d / "ppf-cts-server").write_text("")
+        if solver:
+            (d / "ppf-contact-solver").write_text("")
+        if marker is not None:
+            (d / ".ppf-backend").write_text(marker + "\n")
+
+    # What `cargo build --release -p ppf-cts-server` leaves: the server alone.
+    directory("target", "release", solver=False)
+    directory("target", "cuda", "release", marker="cuda")
+    # A complete build from before markers were written.
+    directory("target", "rocm", "release")
+    # A build that failed after `build.rs` wrote its marker.
+    directory("target", "cpu", "release", solver=False, marker="cpu")
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the probe runs on a POSIX solver host")
+def test_the_probe_run_by_a_real_shell_lists_builds_and_only_builds(
+    remote_builds, conn, tmp_path
+):
+    """The command itself, run by `sh` against a tree on disk.
+
+    Every other test here reads the command as text or hands the resolver a
+    listing written by hand, so nothing held the two ends together: what the
+    shell prints for a real directory, and what the native resolver says about
+    that same directory. This runs both and requires them to agree, which is
+    the drift gate for the one rule the two seams cannot share in code.
+    """
+    _host_tree(tmp_path)
+    root = tmp_path.as_posix()
+    listing = _probe_by_a_real_shell(remote_builds, root)
+    assert listing == {
+        f"{root}/target/cuda/release": "cuda",
+        f"{root}/target/rocm/release": "",
+    }
+    for device in (conn.DEVICE_GPU, conn.DEVICE_CPU):
+        for gpu_backend in (conn.GPU_BACKEND_AUTO, "CUDA", "ROCM"):
+            native = conn.linux_native_server_binary(str(tmp_path), device, gpu_backend)
+            remote = conn.remote_server_binary(root, listing, device, gpu_backend)
+            assert native == remote, (device, gpu_backend)
+    assert conn.remote_holds_any_server(root, listing)
+    assert conn.resolve_linux_native_root(str(tmp_path)) == str(tmp_path)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the probe runs on a POSIX solver host")
+def test_a_tilde_root_run_by_a_real_shell_finds_the_build(remote_builds, tmp_path):
+    """Both tests read the expanded path, and the listing keeps the tilde."""
+    _host_tree(tmp_path / "ppf")
+    listing = _probe_by_a_real_shell(
+        remote_builds, "~/ppf", env={"HOME": str(tmp_path), "PATH": "/usr/bin:/bin"}
+    )
+    assert listing == {
+        "~/ppf/target/cuda/release": "cuda",
+        "~/ppf/target/rocm/release": "",
+    }
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the probe runs on a POSIX solver host")
+def test_a_host_holding_only_a_bare_server_lists_nothing(remote_builds, conn, tmp_path):
+    """And the refusal that follows names what a build is and how to make one."""
+    d = tmp_path / "target" / "release"
+    d.mkdir(parents=True)
+    (d / "ppf-cts-server").write_text("")
+    root = tmp_path.as_posix()
+    listing = _probe_by_a_real_shell(remote_builds, root)
+    assert listing == {}
+    assert not conn.remote_holds_any_server(root, listing)
+    text = conn.remote_not_found_message(root, listing, conn.DEVICE_GPU)
+    assert "ppf-contact-solver" in text, text
+    assert "`cargo build --release`" in text, text
+    assert "-p ppf-cts-server" not in text, text
+    # The server IS on this host, so the refusal must not say it was not found.
+    assert "not found" not in text, text
 
 
 def test_the_probe_quotes_the_root_it_is_given(remote_builds):
@@ -374,6 +499,7 @@ def test_the_remote_rule_matches_the_native_one_case_for_case(conn, tmp_path):
         d = tmp_path.joinpath(*sub.split("/"))
         d.mkdir(parents=True, exist_ok=True)
         (d / "ppf-cts-server").write_text("")
+        (d / "ppf-contact-solver").write_text("")
         (d / ".ppf-backend").write_text(marker)
     listing = {
         posixpath.join(tmp_path.as_posix(), sub): marker for sub, marker in layouts

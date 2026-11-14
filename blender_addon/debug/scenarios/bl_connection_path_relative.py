@@ -97,6 +97,8 @@ try:
     os.makedirs(project, exist_ok=True)
     bundle = os.path.join(tmp, "ppf-contact-solver-win64")
     _touch(os.path.join(bundle, "target", "release", "ppf-cts-server.exe"))
+    # A release directory is a build only with the solver beside the server.
+    _touch(os.path.join(bundle, "target", "release", "ppf-contact-solver.exe"))
     _touch(os.path.join(bundle, "python", "python.exe"))
 
     blend_path = os.path.join(project, "scene.blend")
@@ -219,6 +221,7 @@ try:
     # REMOTE path needs would only cost the user an unpressable button.
     spaced = os.path.join(tmp, "First Last", "ppf-contact-solver-win64")
     _touch(os.path.join(spaced, "target", "release", "ppf-cts-server.exe"))
+    _touch(os.path.join(spaced, "target", "release", "ppf-contact-solver.exe"))
     record("space_is_not_shell_unsafe",
            utils.find_shell_unsafe_path_char(spaced) is None
            and utils.find_invalid_path_char(spaced) == " ",

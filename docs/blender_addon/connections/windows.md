@@ -46,7 +46,10 @@ it. A GPU build still needs the GPU driver.
    `target\release`, `bin`, or `python` also works: the add-on searches the
    parent folders for the solver root and shows the one it used. Under the
    field the panel shows **Solver path valid** (with **Using solver root**
-   when it resolved a subfolder), or **ppf-cts-server.exe not found**.
+   when it resolved a subfolder), or **ppf-cts-server.exe not found**. A
+   folder that holds the server with no `ppf-contact-solver.exe` beside it
+   shows **No solver build found under** the path; see
+   [Troubleshooting](../troubleshooting.md#connection-the-native-types).
 3. Click **GPU** or **CPU** in the toggle under **Solver Path**. When the
    folder holds more than one GPU build, a **GPU Backend** dropdown also
    appears while the toggle is on **GPU**; the x64 distribution holds CUDA

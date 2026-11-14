@@ -22,10 +22,11 @@
 # the panel only ever reads the cache.
 #
 # WHAT IS ASKED. One `sh` command per connection, listing the directories under
-# the root that hold a server and what each one's `.ppf-backend` marker says.
-# The marker is the only evidence of what a directory HOLDS, since every backend
-# links the same executable name; `connection._Reported` resolves that listing
-# with the same rule the native resolvers apply to a filesystem.
+# the root that hold a build, which is the solver beside the server, and what
+# each one's `.ppf-backend` marker says. The marker is the only evidence of
+# WHICH backend a directory holds, since every backend links the same executable
+# name; `connection._Reported` resolves that listing with the same rule the
+# native resolvers apply to a filesystem.
 
 from __future__ import annotations
 
@@ -54,6 +55,11 @@ _CANDIDATE_SUBDIRS = (
 )
 
 _SERVER_NAME = "ppf-cts-server"
+# What has to sit beside the server for the directory to be a build. A server
+# built alone (`cargo build --release -p ppf-cts-server`) starts and answers
+# pings from a directory no solve can run from; `connection._server_in` holds
+# the native side to the same rule and says why the marker does not stand in.
+_SOLVER_NAME = "ppf-contact-solver"
 _MARKER_NAME = ".ppf-backend"
 
 # What separates the two fields of the probe's output. A tab cannot occur in
@@ -98,9 +104,16 @@ def probe_command(root: str) -> str:
     """The shell command that lists *root*'s builds on the solver host.
 
     Prints one `<marker><TAB><absolute directory>` line per directory that holds
-    a server, with the marker empty where there is none. A directory with no
-    server prints nothing, which is the answer "there is no build here". The
-    field order is load-bearing; `_FIELD_SEP` says why.
+    a build, with the marker empty where there is none. A directory with no
+    server, or with a server and no solver beside it, prints nothing, which is
+    the answer "there is no build here". The field order is load-bearing;
+    `_FIELD_SEP` says why.
+
+    BOTH TESTS SIT INSIDE THE `if`, never chained as `test && test && printf`.
+    The parts are joined with `;`, so the command's exit status is its last
+    part's, and a chain that stops at a missing file there exits non-zero: the
+    add-on would record a host it could not ask where the host had simply
+    answered "nothing in that last directory".
 
     THE ROOT IS INTERPOLATED INTO A SHELL COMMAND, so it is quoted here. Every
     path that reaches this point has already been through the add-on's
@@ -124,9 +137,10 @@ def probe_command(root: str) -> str:
         # lookup computes, and the host is then reported as holding no solver.
         directory = posixpath.join(root, subdir)
         tested = _tested(posixpath.join(directory, _SERVER_NAME))
+        solver = _tested(posixpath.join(directory, _SOLVER_NAME))
         marker = _tested(posixpath.join(directory, _MARKER_NAME))
         parts.append(
-            f'if [ -f {tested} ]; then '
+            f'if [ -f {tested} ] && [ -f {solver} ]; then '
             f'printf "%s\\t%s\\n" '
             f'"$(cat {marker} 2>/dev/null)" '
             f'{_shell_quote(directory)}; fi'

@@ -315,12 +315,14 @@ setup.
 - **`The connection names no directory on the solver host, so its solver
   builds could not be listed.`**: **Remote Path** is empty. Enter the
   solver root.
-- **`ppf-cts-server not found under <root> on the solver host, in any
-  layout`**: **Remote Path** does not hold a built solver. Point it at the
-  folder that holds `target/release/`, `target/cuda/release/`,
-  `target/rocm/release/`, or `target/cpu/release/`, and build the solver
-  there with `cargo build --release` if there is none, so the solver and
-  the Python extension are built next to the server.
+- **`No solver build found under <root> on the solver host`**: **Remote
+  Path** does not hold a built solver. Point it at the folder that holds
+  `target/release/`, `target/cuda/release/`, `target/rocm/release/`, or
+  `target/cpu/release/`, and build the solver there with
+  `cargo build --release` if there is none, so the solver and the Python
+  extension are built next to the server. A folder holding `ppf-cts-server`
+  with no `ppf-contact-solver` beside it is not a build and gets this
+  message too.
 - **`The solver host holds the CPU build of the solver under <root> and no
   GPU build`** (or the reverse), and **`The solver host holds these GPU
   builds under <root>: cuda, and no rocm build`**: raised at **Start

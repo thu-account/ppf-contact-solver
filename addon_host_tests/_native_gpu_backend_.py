@@ -31,11 +31,19 @@ def conn():
 
 
 def _build(root, *parts, backend=None, windows=True):
-    """A server under ``<root>/<parts>``, with *backend* recorded beside it."""
+    """A build under ``<root>/<parts>``, with *backend* recorded beside it.
+
+    The solver is written beside the server, as every real build has it: a
+    release directory holding the server alone is not a build
+    (`connection._server_in`), and `_native_device_selection_` has the cases
+    for that refusal.
+    """
     exe = "ppf-cts-server.exe" if windows else "ppf-cts-server"
+    solver = "ppf-contact-solver.exe" if windows else "ppf-contact-solver"
     directory = root.joinpath(*parts)
     directory.mkdir(parents=True, exist_ok=True)
     (directory / exe).write_text("")
+    (directory / solver).write_text("")
     if backend is not None:
         (directory / ".ppf-backend").write_text(backend)
     return str(directory / exe)

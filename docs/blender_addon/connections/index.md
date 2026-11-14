@@ -404,7 +404,7 @@ When the listing of the solver host's builds fails or finds nothing, the
 | *The connection names no directory on the solver host, so its solver builds could not be listed.* | **Remote Path** or **Container Path** is empty. Disconnect, fill it in, and connect again. |
 | *Could not list the solver builds on the solver host: ...* | The listing command could not run. Check the connection, then press the refresh button. |
 | *Listing the solver builds on the solver host failed: ...* | The host answered with an error, which follows the colon. Fix it on the host, then press the refresh button. |
-| *No solver build found under `<path>`* | The listing worked but the path holds no solver. Disconnect, correct the path, and connect again. |
+| *No solver build found under `<path>`* | The listing worked but the path holds no solver build. Disconnect, correct the path, and connect again; or, when the path is right, build the solver on the host and press the refresh button. |
 | *The solver host has no `<device>` build here; it has `<other>`* | The path holds only the other device's build. Set **Compute Device** to that device, or build the missing one on the host and press the refresh button. |
 
 ### What determines which device a directory counts as
@@ -425,13 +425,19 @@ missing.
 | Folder holds the other device's build | *`<root>` holds the CPU build of the solver and no GPU build. Set Compute Device to CPU to run it, or point Solver Path at a folder that has a GPU build.* |
 | Folder holds GPU builds, but not the named one | *`<root>` holds these GPU builds: cuda, and no rocm build. Set GPU Backend to one of those or to Automatic ...* |
 | Folder holds no solver at all | *ppf-cts-server not found under `<root>` ...*, which names where the add-on looks for the solver |
+| Folder holds a server with no solver beside it | *`<folder>` holds ppf-cts-server and no ppf-contact-solver beside it, so no solve can run from it ...*, which names a build that makes both |
 | **Automatic**, several GPU builds, none with a usable device | *No GPU build in this folder has a usable device (cuda: ...; rocm: ...). Set Compute Device to CPU to run without a GPU.* |
 
 On the remote types the messages name the solver host instead of a local
 folder and say **Remote Path** whichever type you use (the Docker types call
 that field **Container Path**). They appear when you press **Start
 Server on Remote**, except the one for no solver at all, which appears after
-**Connect**.
+**Connect** and reads *No solver build found under `<root>` on the solver
+host ...*.
+
+The row for a server with no solver beside it is for the native types. On a
+remote type that folder gets the message for no solver at all, because the
+listing of the host's builds does not include it.
 
 The last row applies to native types only, and it appears at **Start Server
 on Remote**: the add-on probes each candidate solver for a usable device,
@@ -658,6 +664,12 @@ executable name, so the marker is the evidence the add-on prefers for what
 a directory holds. A directory without a marker is judged by where it sits
 under the solver folder: for example, `target/cpu/release/` counts as the CPU
 build.
+
+A `release` directory counts as a build only when the solver binary,
+`ppf-contact-solver`, sits beside the server, with or without a marker. A
+run takes its solver from the server's own build directory, so a directory
+holding the server alone, which is what `cargo build --release -p
+ppf-cts-server` produces, is not offered as a build on any connection type.
 
 **Start Server step**
 

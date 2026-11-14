@@ -254,9 +254,12 @@ class _Reported:
     connection by `core.remote_builds`, never while drawing: reaching that host
     means a command over the backend, and a panel redraws many times a second.
 
-    A directory absent from the listing holds no server, which is what the
-    probe was asked. That is the same answer `_Disk.exists` gives for a path
-    that is not there, and it is why the rule above cannot tell the two apart.
+    A directory absent from the listing holds no build, which is what the
+    probe was asked: it lists a directory only when the solver sits beside the
+    server there (`_server_in` says why), so every file this seam is asked
+    about in a listed directory is one the host already found. That is the same
+    answer `_Disk.exists` gives for a path that is not there, and it is why the
+    rule above cannot tell the two apart.
     """
 
     def __init__(self, listing):
@@ -278,6 +281,56 @@ class _Reported:
 
 
 _DISK = _Disk()
+
+
+def _solver_name(exe_name):
+    """The solver's file name beside a server called *exe_name*.
+
+    Taken from the server's name and not from ``sys.platform``: the resolvers
+    are shared by all three natives and by the remote types, so the platform
+    in question is the one the server was named for, not the one running this.
+    """
+    return "ppf-contact-solver.exe" if exe_name.endswith(".exe") else "ppf-contact-solver"
+
+
+def _server_in(root, parts, exe_name, fs=_DISK):
+    """The server in ``<root>/<parts>`` when that directory holds a build, else ``None``.
+
+    A BUILD IS THE SOLVER AND THE SERVER, SIDE BY SIDE. Launching from a
+    `release` directory names that directory's target in `CARGO_TARGET_DIR`
+    (`native_target_dir`), and the session a run writes takes the solver out of
+    it, so a `release` directory holding the server alone starts a server that
+    answers pings and can never run a solve. It is also easy to make:
+    `cargo build --release -p ppf-cts-server` builds the server crate and
+    nothing else, no solver and no marker. Left in `target/release`, that
+    directory was offered as the GPU build of a tree whose only real build was
+    the CPU one beside it.
+
+    THE MARKER DOES NOT STAND IN FOR THE SOLVER. `build.rs` writes it when the
+    build script runs, before anything is compiled or linked, so a failed or
+    interrupted build leaves a marker beside a server with no solver. The file
+    itself is the evidence, and every producer of a build directory (cargo, the
+    three bundlers, the Docker image) puts it there.
+
+    ONLY A `release` DIRECTORY IS ASKED. A server in the Windows `bin/` rows
+    has no target directory of its own: the spawn names none for it and the
+    frontend searches `<root>/target`, so nothing is expected beside it and
+    those rows resolve as they always did.
+
+    Every question "does this directory hold a server" goes through here, so
+    the device rows, the GPU build listing and the root walk cannot disagree
+    about a half-built directory.
+    """
+    server = fs.join(root, parts, exe_name)
+    if not fs.exists(server):
+        return None
+    if (
+        parts
+        and parts[-1] == "release"
+        and not fs.exists(fs.join(root, parts, _solver_name(exe_name)))
+    ):
+        return None
+    return server
 
 
 def _recorded_device(directory, fs=_DISK):
@@ -370,8 +423,8 @@ def gpu_builds(root, table, exe_name, fs=_DISK):
     if not root:
         return found
     for name in _GPU_BACKEND_ORDER:
-        candidate = fs.join(root, _GPU_BACKEND_SUBDIRS[name], exe_name)
-        if not fs.exists(candidate):
+        candidate = _server_in(root, _GPU_BACKEND_SUBDIRS[name], exe_name, fs)
+        if candidate is None:
             continue
         recorded = _recorded_backend(fs.parent(candidate), fs)
         # THE MARKER WINS OVER THE DIRECTORY'S NAME. A `target/cuda` holding a
@@ -384,8 +437,8 @@ def gpu_builds(root, table, exe_name, fs=_DISK):
         elif recorded in _GPU_BACKENDS:
             found.setdefault(recorded, candidate)
     for parts in table.get(DEVICE_GPU, ()):
-        candidate = fs.join(root, parts, exe_name)
-        if not fs.exists(candidate):
+        candidate = _server_in(root, parts, exe_name, fs)
+        if candidate is None:
             continue
         recorded = _recorded_backend(fs.parent(candidate), fs)
         if recorded is None:
@@ -527,8 +580,8 @@ def _native_server_binary(root, device, table, exe_name, fs=_DISK):
     if not root:
         return None
     for parts, own_row in _server_subpaths(table, device, exe_name):
-        candidate = fs.join(root, parts[:-1], parts[-1])
-        if not fs.exists(candidate):
+        candidate = _server_in(root, parts[:-1], parts[-1], fs)
+        if candidate is None:
             continue
         recorded = _recorded_device(fs.parent(candidate), fs)
         accepted = own_row if recorded is None else recorded == device
@@ -567,12 +620,34 @@ def _holds_any_server(root, table, exe_name, fs=_DISK):
         return False
     for rows in table.values():
         for parts in rows:
-            if fs.exists(fs.join(root, parts, exe_name)):
+            if _server_in(root, parts, exe_name, fs) is not None:
                 return True
     for parts in _GPU_BACKEND_SUBDIRS.values():
-        if fs.exists(fs.join(root, parts, exe_name)):
+        if _server_in(root, parts, exe_name, fs) is not None:
             return True
     return False
+
+
+def _servers_without_a_solver(root, table, exe_name, fs=_DISK):
+    """The directories under *root* that hold a server and are not a build.
+
+    The directories `_server_in` turns away, in the order the layouts are
+    visited. Asked only once a root has resolved to nothing, to tell "there is
+    no solver here" from "there is half of one", which need different advice.
+    """
+    found = []
+    if not root:
+        return found
+    rows = [parts for rows in table.values() for parts in rows]
+    rows.extend(_GPU_BACKEND_SUBDIRS.values())
+    for parts in rows:
+        server = fs.join(root, parts, exe_name)
+        if not fs.exists(server) or _server_in(root, parts, exe_name, fs) is not None:
+            continue
+        directory = fs.parent(server)
+        if directory not in found:
+            found.append(directory)
+    return found
 
 
 def win_native_server_binary(
@@ -653,6 +728,54 @@ def _absent_device_message(root, device, resolver):
     )
 
 
+def _incomplete_build_message(root, table, exe_name):
+    """The refusal for a root whose server has no solver beside it, else None.
+
+    "Not found" would be false, the artist can see the server, and the advice
+    that goes with it sends them to point Solver Path somewhere else when the
+    folder is right. What is missing is the other half of the build, so the
+    refusal names the directory, the file it lacks, and a build that makes both.
+    """
+    bare = _servers_without_a_solver(root, table, exe_name)
+    if not bare:
+        return None
+    return (
+        f"{bare[0]} holds {exe_name} and no {_solver_name(exe_name)} beside "
+        f"it, so no solve can run from it. A build that stopped early leaves "
+        f"that, and so does `cargo build --release -p ppf-cts-server`, which "
+        f"builds the server alone. Build the solver as well, in {root}: "
+        f"{_finishing_build(bare[0])}."
+    )
+
+
+def _finishing_build(directory):
+    """The cargo command that fills *directory*, a release directory left half built.
+
+    NOT THE SAME COMMAND FOR EVERY DIRECTORY. A plain build writes to
+    `target/release`, so advising it for a bare `target/cpu/release` builds a
+    second tree and leaves the named one as it was; a backend's own target
+    directory is filled by naming it. And where a marker says which backend the
+    interrupted build was, that is the one to finish: `build.rs` refuses a
+    different backend in a directory whose marker names another, so offering
+    the CPU build there sends the artist into that refusal.
+    """
+    own = os.path.basename(os.path.dirname(directory))
+    backend = _recorded_backend(directory)
+    if backend not in _GPU_BACKENDS + ("cpu",):
+        backend = None
+    if own != "target":
+        return (
+            f"`CARGO_TARGET_DIR=target/{own} cargo build --release "
+            f"--features {backend or own}`"
+        )
+    if backend:
+        return f"`cargo build --release --features {backend}`"
+    return (
+        "`cargo build --release`, or `cargo build --release --features cpu` "
+        "for the CPU build"
+    )
+
+
 def win_native_not_found_message(root: str, device: str | None = None) -> str:
     """Text for a Windows Native root that holds no ``ppf-cts-server.exe``.
 
@@ -665,18 +788,25 @@ def win_native_not_found_message(root: str, device: str | None = None) -> str:
     cannot resolve on its own (it walks up to a root, never down into one).
 
     Given *device*, a root that holds the other device's build is refused
-    with the text that names it instead (``_absent_device_message``).
+    with the text that names it instead (``_absent_device_message``), and a
+    root whose server has no solver beside it with the text that names the
+    missing half (``_incomplete_build_message``).
     """
     absent = _absent_device_message(root, device, win_native_server_binary)
     if absent is not None:
         return absent
+    incomplete = _incomplete_build_message(
+        root, _WIN_DEVICE_SUBDIRS, "ppf-cts-server.exe"
+    )
+    if incomplete is not None:
+        return incomplete
     return (
         f"ppf-cts-server.exe not found under {root}. Point Solver Path at the "
         f"folder that has target\\release\\ppf-cts-server.exe in it (the "
         f"extracted Windows bundle, or a repo checkout you built), not at the "
         f"folder you extracted the bundle into and not at the .zip. If you "
-        f"are building from source, run "
-        f"`cargo build --release -p ppf-cts-server` first."
+        f"are building from source, run `cargo build --release` first, which "
+        f"builds the solver and the server."
     )
 
 
@@ -950,7 +1080,14 @@ def connect_win_native(
     # keeps current_directory / remote_root pointed at the real root, which the
     # backend uses as the transfer cwd and PYTHONPATH base and which
     # start_server spawns from.
-    root = resolve_win_native_root(root) or root.rstrip("/\\")
+    # A half-built root resolves to nothing, so it is looked for by the same
+    # walk before the raw path: the refusal below then names the directory that
+    # holds a server with no solver, not "not found" about a folder inside it.
+    root = (
+        resolve_win_native_root(root)
+        or native_half_built_root("win_native", root)
+        or root.rstrip("/\\")
+    )
     root = root.rstrip("/\\")
 
     # Refuse a root that holds no solver, rather than reporting a connection
@@ -1065,17 +1202,22 @@ def mac_native_not_found_message(root: str, device: str | None = None) -> str:
     resolve on its own (it walks up to a root, never down into one).
 
     Given *device*, a root that holds the other device's build is refused
-    with the text that names it instead (``_absent_device_message``).
+    with the text that names it instead (``_absent_device_message``), and a
+    root whose server has no solver beside it with the text that names the
+    missing half (``_incomplete_build_message``).
     """
     absent = _absent_device_message(root, device, mac_native_server_binary)
     if absent is not None:
         return absent
+    incomplete = _incomplete_build_message(root, _MAC_DEVICE_SUBDIRS, "ppf-cts-server")
+    if incomplete is not None:
+        return incomplete
     return (
         f"ppf-cts-server not found under {root}. Point Solver Path at the "
         f"folder that has target/release/ppf-cts-server in it (the extracted "
         f"macOS distribution, or a repo checkout you built), not at the folder "
         f"you extracted it into. If you are building from source, run "
-        f"`cargo build --release -p ppf-cts-server` first."
+        f"`cargo build --release` first, which builds the solver and the server."
     )
 
 
@@ -1173,18 +1315,26 @@ def linux_native_not_found_message(root: str, device: str | None = None) -> str:
     own (it walks up to a root, never down into one).
 
     Given *device*, a root that holds the other device's build is refused with
-    the text that names it instead (``_absent_device_message``).
+    the text that names it instead (``_absent_device_message``), and a root
+    whose server has no solver beside it with the text that names the missing
+    half (``_incomplete_build_message``).
     """
     absent = _absent_device_message(root, device, linux_native_server_binary)
     if absent is not None:
         return absent
+    incomplete = _incomplete_build_message(
+        root, _LINUX_DEVICE_SUBDIRS, "ppf-cts-server"
+    )
+    if incomplete is not None:
+        return incomplete
     return (
         f"ppf-cts-server not found under {root}. Point Solver Path at the "
         f"folder that has target/release/ppf-cts-server in it, or "
         f"target/cuda/release, target/rocm/release or target/cpu/release (the "
         f"extracted Linux distribution, or a repo checkout you built), not at "
         f"the folder you extracted it into. If you are building from source, "
-        f"run `cargo build --release -p ppf-cts-server` first."
+        f"run `cargo build --release` first, which builds the solver and the "
+        f"server."
     )
 
 
@@ -1695,7 +1845,14 @@ def connect_mac_native(root, port, device=DEVICE_GPU, project_name=""):
     # path the user chose. Resolving here keeps current_directory /
     # remote_root pointed at the real root, which the backend uses as the
     # transfer cwd and PYTHONPATH base and which start_server spawns from.
-    root = resolve_mac_native_root(root) or root.rstrip("/")
+    # A half-built root resolves to nothing, so it is looked for by the same
+    # walk before the raw path: the refusal below then names the directory that
+    # holds a server with no solver, not "not found" about a folder inside it.
+    root = (
+        resolve_mac_native_root(root)
+        or native_half_built_root("mac_native", root)
+        or root.rstrip("/")
+    )
     root = root.rstrip("/")
 
     # Refuse a root that holds no solver, rather than reporting a connection
@@ -1930,7 +2087,14 @@ def connect_linux_native(
     # Resolving here keeps current_directory / remote_root pointed at the real
     # root, which the backend uses as the transfer cwd and PYTHONPATH base and
     # which start_server spawns from.
-    root = resolve_linux_native_root(root) or root.rstrip("/")
+    # A half-built root resolves to nothing, so it is looked for by the same
+    # walk before the raw path: the refusal below then names the directory that
+    # holds a server with no solver, not "not found" about a folder inside it.
+    root = (
+        resolve_linux_native_root(root)
+        or native_half_built_root("linux_native", root)
+        or root.rstrip("/")
+    )
     root = root.rstrip("/")
 
     # Refuse a root that holds no solver, rather than reporting a connection and
@@ -2014,6 +2178,62 @@ def native_resolvers(backend_type):
     filesystem it cannot see, and a default would answer it with this machine's.
     """
     return _NATIVE_RESOLVERS[backend_type]
+
+
+# For each native: the layout table, the server's name, how far its root walk
+# climbs and which separators end a selection. They answer the one question the
+# tuples above do not, what a selection holds besides a build.
+_NATIVE_LAYOUTS = {
+    "win_native": (
+        _WIN_DEVICE_SUBDIRS, "ppf-cts-server.exe", _WIN_NATIVE_MAX_ASCEND, "/\\",
+    ),
+    "mac_native": (
+        _MAC_DEVICE_SUBDIRS, "ppf-cts-server", _MAC_NATIVE_MAX_ASCEND, "/",
+    ),
+    "linux_native": (
+        _LINUX_DEVICE_SUBDIRS, "ppf-cts-server", _LINUX_NATIVE_MAX_ASCEND, "/",
+    ),
+}
+
+
+def native_half_built_root(backend_type, selected):
+    """The folder at or above *selected* whose server has no solver beside it, or None.
+
+    THE SAME WALK THE ROOT RESOLVERS MAKE, FOR THE SELECTIONS THEY MAKE IT FOR.
+    `target/release`, `target` and the server file itself are easy things to
+    pick, and `resolve_<native>_root` climbs from them to the root. A
+    half-built folder resolves to no root at all, so the caller is left
+    holding the raw selection, and asking only that exact folder would say the
+    server was not found about the directory that holds it.
+
+    Asked only once the root walk has found nothing: a folder with a complete
+    build at or above the selection is that build's root, whatever else it
+    holds.
+    """
+    table, exe_name, levels, separators = _NATIVE_LAYOUTS[backend_type]
+    if not selected or not selected.strip():
+        return None
+    current = selected.strip().rstrip(separators)
+    if os.path.isfile(current):
+        current = os.path.dirname(current)
+    for _ in range(levels + 1):
+        if _servers_without_a_solver(current, table, exe_name):
+            return current
+        parent = os.path.dirname(current)
+        if not parent or parent == current:
+            break  # reached the filesystem root
+        current = parent
+    return None
+
+
+def native_half_built(backend_type, selected):
+    """Whether *selected* is, or sits inside, a root whose server has no solver.
+
+    For the panel's path line, which must not say the server was not found
+    about a folder the artist can see it in. The refusal that names the
+    directory and the missing file is the native's own not-found message.
+    """
+    return native_half_built_root(backend_type, selected) is not None
 
 
 def native_path_check(
@@ -2138,12 +2358,17 @@ def remote_not_found_message(root, listing, device=None, gpu_backend=None):
                 f"{device} build."
             )
     if not remote_holds_any_server(root, listing):
+        # WORDED AS WHAT THE PROBE TESTED, which is true of both hosts that get
+        # here: one holding nothing, and one whose release directory holds the
+        # server alone. The listing cannot tell them apart, and "ppf-cts-server
+        # not found" is false about the second.
         return (
-            f"{REMOTE_EXE} not found under {root} on the solver host, in any "
-            f"layout (target/release, target/cuda/release, target/rocm/release "
-            f"or target/cpu/release). Point Remote Path at the folder that "
-            f"holds a built solver, and build one there with "
-            f"`cargo build --release -p ppf-cts-server` if there is none."
+            f"No solver build found under {root} on the solver host: none of "
+            f"target/release, target/cuda/release, target/rocm/release or "
+            f"target/cpu/release holds ppf-contact-solver beside {REMOTE_EXE}. "
+            f"Point Remote Path at the solver root, the folder that has "
+            f"target/ in it, and build one there with `cargo build --release` "
+            f"if there is none."
         )
     return (
         f"No {device} build of the solver is under {root} on the solver host."

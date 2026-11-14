@@ -197,7 +197,7 @@ your compose file. See
 
 ## Connection: the solver path
 
-### "ppf-cts-server not found under ... on the solver host, in any layout"
+### "No solver build found under ... on the solver host"
 
 This message is for the SSH and Docker types. Point **Remote Path** (SSH
 types) or **Container Path** (Docker types) at the solver root: the directory
@@ -206,9 +206,10 @@ that has `target/release/`, `target/cuda/release/`, `target/rocm/release/` or
 point at `target/release` itself. The message names **Remote Path** for the
 Docker types as well. If the host has no solver, build one there with `cargo
 build --release`, which builds the server, the solver and the Python
-extension together. The message itself may suggest `cargo build --release -p
-ppf-cts-server`, which builds only the server, so use the plain command. See
-[SSH (Direct)](connections/ssh.md).
+extension together. A folder that holds `ppf-cts-server` with no
+`ppf-contact-solver` beside it is not a build and gets this message too: that
+is what `cargo build --release -p ppf-cts-server` leaves, which builds only
+the server. See [SSH (Direct)](connections/ssh.md).
 
 Two related messages come from the same check:
 
@@ -247,9 +248,19 @@ server folder on macOS or Linux. To build from source, run `cargo build
 --release` in the checkout (or `build-win-native\build.bat`,
 `build-mac-native/build.sh` or `build-linux-native/build.sh`). It builds the
 server, the solver and the Python extension together, and a run takes all
-three from the same build folder. The message itself may suggest `cargo build
---release -p ppf-cts-server`, which builds only the server, so use the plain
-command.
+three from the same build folder.
+
+A `release` folder counts as a build only when `ppf-contact-solver`
+(`ppf-contact-solver.exe` on Windows) sits beside the server. `cargo build
+--release -p ppf-cts-server` builds only the server, and a folder left that
+way is refused with *`<folder>` holds ppf-cts-server and no ppf-contact-solver
+beside it, so no solve can run from it*; the panel shows **No solver build
+found under** the path. The message ends with the build that fills that
+folder: the plain `cargo build --release` for `target/release` (or `cargo
+build --release --features cpu` for the CPU build), and
+`CARGO_TARGET_DIR=target/<backend> cargo build --release --features <backend>`
+for a backend's own folder. When the root also holds a complete build for the
+other device, the refusal names that build instead.
 
 *Solver path is not set* means **Solver Path** is empty. Fill it in. The
 **Connect** button is grayed out while the field is empty.
